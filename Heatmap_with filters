@@ -1,0 +1,27 @@
+#Condition_1...Condition_2
+
+# Define the number of top genes to select
+topN <- 10
+
+# Filter for significant mRNAs in the Condition_1...Condition_1 comparison
+filtered_results <- full_results %>%
+  filter(Seq_type == "<column where type of gene is given, optional>", adj.P.Val < 0.05, abs(Condition_1...Condition_2) >= 1) %>%
+  filter(!is.na(TargetID) & TargetID != "") %>%  # Exclude rows with empty or NA TargetID
+  arrange(adj.P.Val) %>%                         # Optionally sort by adjusted p-value
+  distinct(TargetID, .keep_all = TRUE)           # Remove duplicates based on TargetID
+
+# Select the top N mRNAs
+ids_of_interest <- filtered_results %>%
+  slice(1:topN) %>%  # Select the top N genes
+  pull(ID)           # Extract the IDs
+
+# Get unique gene symbols for the top N mRNAs
+gene_names <- filtered_results %>%
+  slice(1:topN) %>%  # Select the top N genes
+  pull(TargetID)     # Extract the TargetID (gene names)
+
+# Extract expression matrix for the top N mRNAs
+gene_matrix <- exprs(gse)[ids_of_interest,]
+
+# Generate the heatmap with the top N genes
+pheatmap(gene_matrix, labels_row = gene_names)
