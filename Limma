@@ -1,0 +1,91 @@
+#Limma
+# Load necessary libraries
+library(limma)
+library(edgeR)
+library(ggplot2)
+library(pheatmap)
+library(RColorBrewer)
+library(ggfortify)
+library(reshape2)
+# File paths
+expression_data_file <- "GSE....._raw_counts_GRCh38.p13_NCBI.csv"
+metadata_file <- "metadata.csv"
+# Read the expression data
+expression_data <- read.csv(expression_data_file, header = TRUE, sep = "\t")
+# Read the metadata
+metadata <- read.csv(metadata_file, header = TRUE)
+View(expression_data)
+# Extract expression matrix (assuming columns 4 to 9 are the sample columns)
+expr_matrix <- as.matrix(expression_data[, 2:12])  # Adjust the column range as necessary
+rownames(expr_matrix) <- expression_data$GeneID
+# Filter metadata for complete cases and match with expression data samples
+metadata <- metadata[complete.cases(metadata$Sample) & complete.cases(metadata$Type), ]
+metadata <- metadata[match(colnames(expr_matrix), metadata$Sample), ]
+# Check if the order matches after filtering
+stopifnot(all(colnames(expr_matrix) == metadata$Sample))
+# Create a DGEList object
+dge <- DGEList(counts = expr_matrix)
+# Normalize the data using TMM normalization
+dge <- calcNormFactors(dge)
+# Convert the metadata Type column to a factor
+metadata$Type <- factor(metadata$Type, levels = c("CONTROL", "DISEASE"))
+# Design matrix for the linear model without intercept
+design <- model.matrix(~ 0 + Type, data = metadata)
+# Apply voom transformation
+v <- voom(dge, design)
+# Fit the linear model
+fit <- lmFit(v, design)
+# Create a contrast matrix to compare DISEASE to CONTROL
+contrast_matrix <- makeContrasts(TypeDISEASE - TypeCONTROL, levels = design)
+# Fit the contrasts
+fit2 <- contrasts.fit(fit, contrast_matrix)
+fit2 <- eBayes(fit2)
+# Extract the top differentially expressed genes
+top_genes <- topTable(fit2, adjust.method = "BH", number = Inf)
+# Save the results to a CSV file
+write.csv(top_genes, file = "DEG_results.csv")
+# Print the top differentially expressed genes
+print(top_genes)
+# Volcano plot with specific cutoffs
+top_genes$logFC <- fit2$coefficients[, 1]
+top_genes$negLogPval <- -log10(top_genes$P.Value)
+top_genes$Significant <- "Not Significant"
+top_genes$Significant[top_genes$P.Value < 0.05 & top_genes$logFC > 1] <- "Upregulated"
+top_genes$Significant[top_genes$P.Value < 0.05 & top_genes$logFC < -1] <- "Downregulated"
+# Save the volcano plot results to a CSV file
+write.csv(top_genes, file = "volcano_plot_results.csv")
+# Create and save the volcano plot
+ggplot(top_genes, aes(x = logFC, y = negLogPval, color = Significant)) +
+geom_point(alpha = 0.6) +
+scale_color_manual(values = c("red", "gray", "blue")) +
+theme_minimal() +
+labs(title = "Volcano Plot", x = "Log2 Fold Change", y = "-Log10 P-Value") +
+theme(legend.position = "top") +
+geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "black") +
+geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "black")
+ggsave("volcano_plot.png")
+# MDS plot
+png("mds_plot.png")
+plotMDS(v, labels = metadata$Type, col = as.numeric(factor(metadata$Type)))
+dev.off()
+# Heatmap of upregulated genes
+upregulated_genes <- top_genes[top_genes$Significant == "Upregulated", ]
+heatmap_data_up <- expr_matrix[rownames(expr_matrix) %in% rownames(upregulated_genes), ]
+# Heatmap of downregulated genes
+downregulated_genes <- top_genes[top_genes$Significant == "Downregulated", ]
+heatmap_data_down <- expr_matrix[rownames(expr_matrix) %in% rownames(downregulated_genes), ]
+# Combine upregulated and downregulated gene data
+combined_heatmap_data <- rbind(heatmap_data_up, heatmap_data_down)
+# Plot combined heatmap
+if (nrow(combined_heatmap_data) >= 2) {
+pheatmap(combined_heatmap_data,
+cluster_rows = TRUE,
+cluster_cols = TRUE,
+show_rownames = TRUE,
+show_colnames = TRUE,
+annotation_col = data.frame(Type = metadata$Type),
+color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdYlBu")))(100),
+main = "Combined Upregulated and Downregulated Genes Heatmap",
+filename = "heatmap_combined.png")
+} else {
+warning("Not enough differentially expressed genes to generate a combined heatmap")
